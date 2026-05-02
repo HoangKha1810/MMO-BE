@@ -7,6 +7,7 @@ import resourceRoutes from './resources.js';
 import cardRoutes from './cards.js';
 import forumRoutes from './forum.js';
 import legacyRoutes from './legacy.js';
+import proxyVendorRoutes from './proxy-vendor.js';
 
 const router = Router();
 
@@ -26,5 +27,6 @@ router.use('/resources', resourceRoutes);
 router.use('/cards', cardRoutes);
 router.use('/forum', forumRoutes);
 router.use('/legacy', legacyRoutes);
+router.use('/proxy-vendor', proxyVendorRoutes);
 
 export default router;
