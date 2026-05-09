@@ -2,11 +2,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { getUserId } from '../lib/auth.js';
+import { tableExists } from '../lib/table-exists.js';
 const router = Router();
 router.post('/exchange', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+    if (!(await tableExists('card_orders'))) {
+        return res.status(503).json({ success: false, message: 'Module thẻ cào chưa được cấu hình trong cơ sở dữ liệu hiện tại' });
     }
     const schema = z.object({
         telco: z.string().min(1),
@@ -37,6 +41,9 @@ router.get('/orders', async (req, res) => {
     const userId = getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+    if (!(await tableExists('card_orders'))) {
+        return res.json({ success: true, data: [] });
     }
     const orders = await prisma.card_orders.findMany({
         where: { user_id: userId },

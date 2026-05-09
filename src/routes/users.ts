@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { getUserId } from '../lib/auth.js';
+import { tableExists } from '../lib/table-exists.js';
 
 const router = Router();
 
@@ -38,9 +39,13 @@ router.get('/orders', async (req, res) => {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
+  const hasCardOrders = await tableExists('card_orders');
+
   const [smmOrders, cardOrders, deposits, resourceOrders] = await Promise.all([
     prisma.smm_orders.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 10 }),
-    prisma.card_orders.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 10 }),
+    hasCardOrders
+      ? prisma.card_orders.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 10 })
+      : Promise.resolve([]),
     prisma.deposit_transactions.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 10 }),
     prisma.resource_orders.findMany({ where: { user_id: userId }, orderBy: { created_at: 'desc' }, take: 10, include: { resource: true } }),
   ]);
