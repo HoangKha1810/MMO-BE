@@ -24,6 +24,9 @@ router.post('/register', async (req, res) => {
     where: {
       OR: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }],
     },
+    select: {
+      id: true,
+    },
   });
 
   if (existing) {
@@ -69,6 +72,18 @@ router.post('/login', async (req, res) => {
   const user = await prisma.users.findFirst({
     where: {
       OR: [{ username: username.toLowerCase() }, { email: username.toLowerCase() }],
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      password: true,
+      balance: true,
+      rank: true,
+      role: true,
+      status: true,
+      avatar: true,
+      is_blue_tick: true,
     },
   });
 
