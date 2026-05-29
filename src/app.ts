@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import morgan from 'morgan';
 import routes from './routes/index.js';
+import gameApiProxyRoutes from './routes/game-api-proxy.js';
 
 dotenv.config();
 
@@ -30,6 +31,8 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
+  app.use('/api/external/game', gameApiProxyRoutes);
+  app.use('/', gameApiProxyRoutes);
   app.use('/api', routes);
 
   return app;
