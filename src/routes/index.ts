@@ -6,6 +6,7 @@ import smmRoutes from './smm.js';
 import resourceRoutes from './resources.js';
 import cardRoutes from './cards.js';
 import forumRoutes from './forum.js';
+import findJobRoutes from './find-job.js';
 import legacyRoutes from './legacy.js';
 import proxyVendorRoutes from './proxy-vendor.js';
 
@@ -26,6 +27,7 @@ router.use('/smm', smmRoutes);
 router.use('/resources', resourceRoutes);
 router.use('/cards', cardRoutes);
 router.use('/forum', forumRoutes);
+router.use('/find-job', findJobRoutes);
 router.use('/legacy', legacyRoutes);
 router.use('/proxy-vendor', proxyVendorRoutes);
 
