@@ -7,7 +7,7 @@ import { tableExists } from '../lib/table-exists.js';
 const router = Router();
 
 router.post('/exchange', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
@@ -46,7 +46,7 @@ router.post('/exchange', async (req, res) => {
 });
 
 router.get('/orders', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }

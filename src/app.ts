@@ -6,6 +6,7 @@ import express from 'express';
 import morgan from 'morgan';
 import routes from './routes/index.js';
 import gameApiProxyRoutes from './routes/game-api-proxy.js';
+import { securityGuard, securityHeaders } from './lib/security.js';
 
 dotenv.config();
 
@@ -19,16 +20,29 @@ if (fs.existsSync(legacyEnvPath)) {
 
 export function createApp() {
   const app = express();
+  const corsOrigins = String(process.env.CORS_ORIGIN || process.env.APP_URL || 'http://localhost:3000,http://127.0.0.1:3000')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   app.use(
     cors({
-      origin: process.env.CORS_ORIGIN?.split(',').map((value) => value.trim()) || true,
+      origin(origin, callback) {
+        if (!origin || corsOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error('CORS origin blocked'));
+      },
       credentials: true,
     })
   );
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+  app.use(securityHeaders);
   app.use(cookieParser());
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+  app.use(securityGuard);
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
   app.use('/api/external/game', gameApiProxyRoutes);

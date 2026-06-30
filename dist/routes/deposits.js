@@ -4,7 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { getUserId } from '../lib/auth.js';
 const router = Router();
 router.get('/', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
     return res.json({ success: true, data: transactions });
 });
 router.post('/', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }

@@ -12,7 +12,7 @@ router.get('/', async (_req, res) => {
     return res.json({ success: true, data: resources });
 });
 router.get('/orders', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -24,7 +24,7 @@ router.get('/orders', async (req, res) => {
     return res.json({ success: true, data: orders });
 });
 router.get('/cart', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -36,7 +36,7 @@ router.get('/cart', async (req, res) => {
     return res.json({ success: true, data: cart });
 });
 router.post('/cart', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -68,7 +68,7 @@ router.post('/cart', async (req, res) => {
     return res.json({ success: true, data: item });
 });
 router.delete('/cart/:id', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }

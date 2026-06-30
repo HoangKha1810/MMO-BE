@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { clearSessionCookie, hashPassword, setSessionCookie } from '../lib/auth.js';
+import { clearSessionCookie, setSessionCookie, verifyPassword } from '../lib/auth.js';
+async function hashPassword(password) {
+    const bcrypt = await import('bcryptjs');
+    return bcrypt.hash(String(password), 10);
+}
 const router = Router();
 router.post('/register', async (req, res) => {
     const schema = z.object({
@@ -15,9 +19,14 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Dữ liệu đăng ký không hợp lệ' });
     }
     const { username, email, password, fullname } = parsed.data;
+    const normalizedUsername = username.trim().toLowerCase();
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[a-zA-Z0-9_.@-]{3,50}$/.test(normalizedUsername)) {
+        return res.status(400).json({ success: false, message: 'Username không hợp lệ' });
+    }
     const existing = await prisma.users.findFirst({
         where: {
-            OR: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }],
+            OR: [{ username: normalizedUsername }, { email: normalizedEmail }],
         },
         select: {
             id: true,
@@ -26,13 +35,14 @@ router.post('/register', async (req, res) => {
     if (existing) {
         return res.status(409).json({ success: false, message: 'Username hoặc email đã tồn tại' });
     }
+    const passwordHash = await hashPassword(password);
     const user = await prisma.users.create({
         data: {
-            username: username.toLowerCase(),
-            email: email.toLowerCase(),
-            password: hashPassword(password),
+            username: normalizedUsername,
+            email: normalizedEmail,
+            password: passwordHash,
             fullname: fullname || username,
-            role: 'user',
+            role: 'member',
             status: 'active',
             rank: 'Thành viên',
             balance: 0,
@@ -74,7 +84,7 @@ router.post('/login', async (req, res) => {
             is_blue_tick: true,
         },
     });
-    if (!user || user.password !== hashPassword(password)) {
+    if (!user || !(await verifyPassword(password, user.password))) {
         return res.status(401).json({ success: false, message: 'Thông tin đăng nhập không đúng' });
     }
     if (user.status !== 'active') {

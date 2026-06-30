@@ -173,7 +173,7 @@ async function createOrUpdateFindJob(userId: number, body: Row) {
 }
 
 router.post('/jobs', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
@@ -217,7 +217,7 @@ router.post('/jobs', async (req, res) => {
 });
 
 router.post('/apply', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
@@ -270,7 +270,7 @@ router.post('/apply', async (req, res) => {
 });
 
 router.post('/report', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }

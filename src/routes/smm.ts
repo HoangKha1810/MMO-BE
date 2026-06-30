@@ -16,7 +16,7 @@ router.get('/services', async (_req, res) => {
 });
 
 router.post('/orders', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
@@ -56,7 +56,7 @@ router.post('/orders', async (req, res) => {
 });
 
 router.get('/orders', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }

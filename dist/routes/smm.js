@@ -12,7 +12,7 @@ router.get('/services', async (_req, res) => {
     return res.json({ success: true, data: services });
 });
 router.post('/orders', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
@@ -45,7 +45,7 @@ router.post('/orders', async (req, res) => {
     return res.json({ success: true, data: order });
 });
 router.get('/orders', async (req, res) => {
-    const userId = getUserId(req);
+    const userId = await getUserId(req);
     if (!userId) {
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     }

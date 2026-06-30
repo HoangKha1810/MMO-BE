@@ -16,13 +16,13 @@ async function getUserRole(userId: number) {
 }
 
 router.get('/config', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
   const role = await getUserRole(userId);
-  if (role !== 'admin') {
+  if (role !== 'owner') {
     return res.status(403).json({ success: false, message: 'Forbidden' });
   }
 
@@ -38,13 +38,13 @@ router.get('/config', async (req, res) => {
 });
 
 router.post('/request', async (req, res) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) {
     return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
 
   const role = await getUserRole(userId);
-  if (role !== 'admin') {
+  if (role !== 'owner') {
     return res.status(403).json({ success: false, message: 'Forbidden' });
   }
 
