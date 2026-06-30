@@ -17,6 +17,7 @@
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "morgan": "^1.10.0",
+    "nodemailer": "^9.0.3",
     "zod": "^3.24.4"
   },
   "devDependencies": {
@@ -25,6 +26,7 @@
     "@types/express": "^5.0.1",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.15.18",
+    "@types/nodemailer": "^8.0.1",
     "prisma": "^6.7.0",
     "tsx": "^4.22.4",
     "typescript": "^5.8.3"

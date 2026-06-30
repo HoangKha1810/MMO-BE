@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { prisma } from './prisma.js';
+import { sendSecurityAlertEmail } from './security-alert-email.js';
 
 type RequestBucket = {
   count: number;
@@ -9,6 +10,7 @@ type RequestBucket = {
 const requestBuckets = new Map<string, RequestBucket>();
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS = Number(process.env.BE_RATE_LIMIT_PER_MINUTE || 180);
+const DDOS_TEMP_BAN_MINUTES = Math.max(1, Math.min(1440, Math.trunc(Number(process.env.BE_DDOS_TEMP_BAN_MINUTES || 15))));
 
 function firstHeaderIp(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
@@ -104,6 +106,59 @@ async function banIp(req: Request, reason: string) {
       reason
     ).catch(() => undefined);
   }
+
+  await sendSecurityAlertEmail({
+    event: 'BE_SECURITY_IP_BANNED',
+    title: 'BE đã khóa IP do request nguy hiểm',
+    severity: 'CRITICAL',
+    ip,
+    reason,
+    path: req.originalUrl || req.url,
+    method: req.method,
+    userAgent: String(req.headers['user-agent'] || ''),
+  }).catch(() => undefined);
+}
+
+async function temporaryBanIp(req: Request, reason: string, minutes = DDOS_TEMP_BAN_MINUTES) {
+  const ip = getRequestIp(req);
+  if (!ip || ip === 'unknown') {
+    return;
+  }
+
+  const safeMinutes = Math.max(1, Math.min(1440, Math.trunc(Number(minutes || DDOS_TEMP_BAN_MINUTES))));
+  const expireSql = `DATE_ADD(NOW(), INTERVAL ${safeMinutes} MINUTE)`;
+  const updated = await prisma.$executeRawUnsafe(
+    `
+      UPDATE banned_ips
+      SET reason = ?, banned_by = 'auto', expire_at = ${expireSql}, created_at = NOW()
+      WHERE ip = ?
+    `,
+    reason,
+    ip
+  ).catch(() => 0);
+
+  if (Number(updated || 0) === 0) {
+    await prisma.$executeRawUnsafe(
+      `
+        INSERT INTO banned_ips (ip, reason, banned_by, user_id, expire_at, created_at)
+        VALUES (?, ?, 'auto', NULL, ${expireSql}, NOW())
+      `,
+      ip,
+      reason
+    ).catch(() => undefined);
+  }
+
+  await sendSecurityAlertEmail({
+    event: 'BE_AI_DDOS_TEMP_BAN',
+    title: 'BE anti-DDoS đã khóa tạm IP',
+    severity: 'CRITICAL',
+    ip,
+    reason,
+    path: req.originalUrl || req.url,
+    method: req.method,
+    userAgent: String(req.headers['user-agent'] || ''),
+    details: { minutes: safeMinutes },
+  }).catch(() => undefined);
 }
 
 async function isBlockedIp(req: Request) {
@@ -144,6 +199,18 @@ function isRateLimited(req: Request) {
   return bucket.count > MAX_REQUESTS;
 }
 
+function cleanupBuckets(now: number) {
+  if (requestBuckets.size < 2000) {
+    return;
+  }
+
+  for (const [key, bucket] of requestBuckets) {
+    if (bucket.resetAt <= now) {
+      requestBuckets.delete(key);
+    }
+  }
+}
+
 export function securityHeaders(_req: Request, res: Response, next: NextFunction) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -174,11 +241,27 @@ export async function securityGuard(req: Request, res: Response, next: NextFunct
   }
 
   if (isRateLimited(req)) {
-    await logSecurityEvent(req, 'BE_RATE_LIMIT', 'HIGH', 'rate_limit', false);
+    const ip = getRequestIp(req);
+    const now = Date.now();
+    cleanupBuckets(now);
+    const apiBucket = requestBuckets.get(`${ip}:api`);
+    const rootBucket = requestBuckets.get(`${ip}:root`);
+    const totalBurst = Number(apiBucket?.count || 0) + Number(rootBucket?.count || 0);
+    const shouldTempBan = totalBurst > MAX_REQUESTS * 2 || Boolean(apiBucket && apiBucket.count > MAX_REQUESTS * 1.35);
+    const reason = shouldTempBan
+      ? `BE AI anti-DDoS temporary ban: burst=${totalBurst}, limit=${MAX_REQUESTS}/min`
+      : 'rate_limit';
+    await logSecurityEvent(req, shouldTempBan ? 'BE_AI_DDOS_TEMP_BAN' : 'BE_RATE_LIMIT', shouldTempBan ? 'CRITICAL' : 'HIGH', reason, shouldTempBan);
+    if (shouldTempBan) {
+      await temporaryBanIp(req, reason);
+    }
     return res.status(429).json({
       success: false,
-      code: 'RATE_LIMIT',
-      message: 'Bạn thao tác quá nhanh, vui lòng thử lại sau.',
+      code: shouldTempBan ? 'IP_BLOCKED' : 'RATE_LIMIT',
+      blocked: shouldTempBan,
+      message: shouldTempBan
+        ? 'IP bị hệ thống anti-DDoS khóa tạm thời. Vui lòng thử lại sau hoặc liên hệ owner.'
+        : 'Bạn thao tác quá nhanh, vui lòng thử lại sau.',
     });
   }
 
