@@ -7,6 +7,7 @@ import morgan from 'morgan';
 import routes from './routes/index.js';
 import gameApiProxyRoutes from './routes/game-api-proxy.js';
 import { securityGuard, securityHeaders } from './lib/security.js';
+import { createVpsRouter, startIntegratedVpsBackend } from './vps/index.js';
 
 dotenv.config();
 
@@ -47,7 +48,10 @@ export function createApp() {
 
   app.use('/api/external/game', gameApiProxyRoutes);
   app.use('/', gameApiProxyRoutes);
+  app.use('/api/vps', createVpsRouter());
   app.use('/api', routes);
+
+  void startIntegratedVpsBackend();
 
   return app;
 }
