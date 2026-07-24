@@ -20,6 +20,8 @@ import {
 } from "../vps/vps-instance-sync.js";
 import { isProcessingInstanceStatus } from "../vps/vps-status.js";
 
+const RENEW_SYNC_DELAYS_MS = [2000, 6500, 15000, 30000, 60000, 120000];
+
 const settingsSchema = z.object({
   brand_name: z.string().min(2).max(120),
   hero_title: z.string().min(10).max(180),
@@ -108,6 +110,10 @@ function getAdminOptimisticStatus(action: z.infer<typeof adminActionSchema>["act
 function getAdminSyncDelays(action: z.infer<typeof adminActionSchema>["action"]) {
   if (action === "confirm-rebuild-vps") {
     return LONG_REBUILD_SYNC_DELAYS_MS;
+  }
+
+  if (action === "renew-vps") {
+    return RENEW_SYNC_DELAYS_MS;
   }
 
   return undefined;
@@ -557,6 +563,9 @@ router.post(
         `UPDATE vps_instances SET status = ? WHERE id = ?`,
         [optimisticStatus, instance.id],
       );
+    }
+
+    if (optimisticStatus || payload.action === "renew-vps") {
       scheduleInstanceSync(
         instance.id,
         instance.vncloud_vps_id,

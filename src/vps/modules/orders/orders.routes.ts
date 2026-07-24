@@ -51,12 +51,14 @@ const instanceActionSchema = z.object({
     "off",
     "restart",
     "cancel",
+    "renew-vps",
     "on-auto-renew",
     "off-auto-renew",
     "check-os-when-rebuild-vps",
     "confirm-rebuild-vps",
   ]),
   osId: z.coerce.number().int().optional(),
+  billingCycleCode: z.string().trim().min(1).max(50).optional(),
 });
 
 type UserBalanceRow = RowDataPacket & {
@@ -141,6 +143,7 @@ type OperatingSystemResourceRow = RowDataPacket & {
 
 const PROVIDER_MAINTENANCE_MESSAGE =
   "Hệ thống bảo trì vui lòng liên hệ admin để có thể mua hàng.";
+const RENEW_SYNC_DELAYS_MS = [2000, 6500, 15000, 30000, 60000, 120000];
 
 function normalizeSearchText(value: string) {
   return value
@@ -227,12 +230,20 @@ function getActionSuccessMessage(action: z.infer<typeof instanceActionSchema>["a
     return "Đã gửi lệnh hủy VPS.";
   }
 
-  return "Đã gửi lệnh lên VNCloud.";
+  if (action === "renew-vps") {
+    return "Đã gửi lệnh gia hạn VPS. Hệ thống sẽ tự đồng bộ lại hạn dùng sau ít phút.";
+  }
+
+  return "Đã gửi lệnh lên hệ thống.";
 }
 
 function getSyncDelaysForAction(action: z.infer<typeof instanceActionSchema>["action"]) {
   if (action === "confirm-rebuild-vps") {
     return LONG_REBUILD_SYNC_DELAYS_MS;
+  }
+
+  if (action === "renew-vps") {
+    return RENEW_SYNC_DELAYS_MS;
   }
 
   return undefined;
@@ -248,6 +259,13 @@ function isActionAllowedForStatus(
 
   if (action === "off" || action === "restart") {
     return isRunningInstanceStatus(status);
+  }
+
+  if (action === "renew-vps") {
+    return (
+      !isProcessingInstanceStatus(status) &&
+      normalizeInstanceStatus(status) !== "delete_vps"
+    );
   }
 
   return true;
@@ -275,7 +293,247 @@ function getInvalidActionStatusMessage(
     return `Chỉ có thể khởi động lại VPS đang chạy. Trạng thái hiện tại là ${currentStatus}.`;
   }
 
+  if (action === "renew-vps") {
+    if (normalizeInstanceStatus(status) === "delete_vps") {
+      return "VPS đã bị hủy hoặc đã xóa nên không thể gia hạn.";
+    }
+
+    return `VPS đang ở trạng thái ${currentStatus}. Hãy chờ hệ thống đồng bộ xong rồi thử gia hạn lại.`;
+  }
+
   return `Trạng thái hiện tại (${currentStatus}) không phù hợp để thực hiện thao tác này.`;
+}
+
+function getRenewBillingCycle(
+  instance: InstanceRow,
+  billingCycleCode?: string | null,
+) {
+  const cycleCode = String(
+    billingCycleCode || instance.billing_cycle_code || "",
+  ).trim();
+
+  if (!cycleCode) {
+    throw new AppError(
+      "VPS này chưa có chu kỳ gia hạn. Vui lòng liên hệ hỗ trợ để kiểm tra lại gói.",
+      400,
+    );
+  }
+
+  return cycleCode;
+}
+
+function getRenewalPrice(instance: InstanceRow) {
+  const renewalPrice = Math.round(Number(instance.unit_price ?? 0));
+
+  if (!Number.isFinite(renewalPrice) || renewalPrice <= 0) {
+    throw new AppError(
+      "VPS này chưa có giá gia hạn trên web. Vui lòng liên hệ hỗ trợ để kiểm tra lại gói.",
+      400,
+    );
+  }
+
+  return renewalPrice;
+}
+
+function getSanitizedProviderError(error: unknown, fallbackMessage: string) {
+  const rawMessage =
+    error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : fallbackMessage;
+  const publicMessage = getPublicOrderErrorMessage(rawMessage) || fallbackMessage;
+  const statusCode =
+    publicMessage !== rawMessage
+      ? 503
+      : error instanceof AppError
+        ? error.statusCode
+        : 400;
+
+  return {
+    rawMessage,
+    publicMessage,
+    statusCode,
+  };
+}
+
+async function renewInstanceForUser(input: {
+  userId: number;
+  username: string;
+  instance: InstanceRow;
+  billingCycleCode?: string;
+}) {
+  if (
+    !Number.isFinite(Number(input.instance.vncloud_vps_id)) ||
+    Number(input.instance.vncloud_vps_id) <= 0
+  ) {
+    throw new AppError(
+      "VPS này chưa đồng bộ mã máy chủ để gia hạn. Vui lòng bấm đồng bộ lại hoặc liên hệ hỗ trợ.",
+      400,
+    );
+  }
+
+  const billingCycleCode = getRenewBillingCycle(
+    input.instance,
+    input.billingCycleCode,
+  );
+  const renewalPrice = getRenewalPrice(input.instance);
+  const actionPayload: Record<string, unknown> = {
+    action: "renew-vps",
+    "vps-id": input.instance.vncloud_vps_id,
+    "billing-cycle": billingCycleCode,
+  };
+
+  const debitResult = await withTransaction(async (connection) => {
+    const [userRows] = await connection.query<UserBalanceRow[]>(
+      `SELECT id, username, balance, status
+       FROM users
+       WHERE id = ?
+       FOR UPDATE`,
+      [input.userId],
+    );
+    const userRow = userRows[0];
+
+    if (!userRow) {
+      throw new AppError("Không tìm thấy tài khoản gia hạn VPS.", 404);
+    }
+
+    if (userRow.status !== "active") {
+      throw new AppError("Tài khoản của bạn đang bị khóa hoặc tạm dừng.", 403);
+    }
+
+    if (Number(userRow.balance) < renewalPrice) {
+      throw new AppError(
+        `Số dư không đủ để gia hạn VPS này. Cần ${formatCurrency(renewalPrice)}.`,
+        400,
+      );
+    }
+
+    const balanceAfter = Number(userRow.balance) - renewalPrice;
+
+    await connection.execute(
+      `UPDATE users
+       SET balance = ?
+       WHERE id = ?`,
+      [balanceAfter, input.userId],
+    );
+    await insertTransaction(
+      connection,
+      input.userId,
+      -renewalPrice,
+      balanceAfter,
+      `[${input.username}] Gia hạn VPS ${
+        input.instance.order_code || `#${input.instance.vncloud_vps_id}`
+      } (${billingCycleCode})`,
+      "order",
+    );
+    await connection.execute(
+      `INSERT INTO vps_instance_logs (vps_instance_id, user_id, action, status, message, payload)
+       VALUES (?, ?, 'renew-vps', 'pending', ?, ?)`,
+      [
+        input.instance.id,
+        input.userId,
+        "Đã trừ ví, đang gửi lệnh gia hạn VPS.",
+        JSON.stringify({
+          actionPayload,
+          renewalPrice,
+          balanceAfter,
+        }),
+      ],
+    );
+
+    return {
+      balanceAfter,
+    };
+  });
+
+  try {
+    const vnCloudResponse = await vnCloudService.actionVps(actionPayload);
+
+    await executeResult(
+      `INSERT INTO vps_instance_logs (vps_instance_id, user_id, action, status, message, payload)
+       VALUES (?, ?, 'renew-vps', 'success', ?, ?)`,
+      [
+        input.instance.id,
+        input.userId,
+        String(vnCloudResponse.message ?? "Gia hạn VPS thành công."),
+        JSON.stringify(vnCloudResponse),
+      ],
+    );
+
+    scheduleInstanceSync(
+      input.instance.id,
+      input.instance.vncloud_vps_id,
+      RENEW_SYNC_DELAYS_MS,
+    );
+
+    return {
+      message: getActionSuccessMessage("renew-vps"),
+      chargedAmount: renewalPrice,
+      balanceAfter: debitResult.balanceAfter,
+      result: {
+        status: "accepted",
+      },
+    };
+  } catch (error) {
+    const { rawMessage, publicMessage, statusCode } = getSanitizedProviderError(
+      error,
+      "Không thể gửi lệnh gia hạn VPS.",
+    );
+
+    await withTransaction(async (connection) => {
+      const [userRows] = await connection.query<UserBalanceRow[]>(
+        `SELECT id, username, balance, status
+         FROM users
+         WHERE id = ?
+         FOR UPDATE`,
+        [input.userId],
+      );
+      const currentBalance = Number(
+        userRows[0]?.balance ?? debitResult.balanceAfter,
+      );
+      const refundedBalance = currentBalance + renewalPrice;
+
+      await connection.execute(
+        `UPDATE users
+         SET balance = ?
+         WHERE id = ?`,
+        [refundedBalance, input.userId],
+      );
+      await insertTransaction(
+        connection,
+        input.userId,
+        renewalPrice,
+        refundedBalance,
+        `[${input.username}] Hoàn tiền gia hạn VPS ${
+          input.instance.order_code || `#${input.instance.vncloud_vps_id}`
+        }`,
+        "refund",
+      );
+      await connection.execute(
+        `INSERT INTO vps_instance_logs (vps_instance_id, user_id, action, status, message, payload)
+         VALUES (?, ?, 'renew-vps', 'failed', ?, ?)`,
+        [
+          input.instance.id,
+          input.userId,
+          rawMessage,
+          JSON.stringify({
+            actionPayload,
+            error:
+              error instanceof AppError
+                ? {
+                    message: error.message,
+                    statusCode: error.statusCode,
+                    details: error.details,
+                  }
+                : {
+                    message: rawMessage,
+                  },
+          }),
+        ],
+      );
+    });
+
+    throw new AppError(publicMessage, statusCode);
+  }
 }
 
 function getProvisioningConfig(input: {
@@ -866,9 +1124,27 @@ router.post(
     const payload = instanceActionSchema.parse(request.body);
     const instanceId = Number(request.params.instanceId);
     const instances = await queryRows<InstanceRow[]>(
-      `SELECT id, order_id, vncloud_vps_id, ip_address, username, password, status, next_due_date, auto_renew
-       FROM vps_instances
-       WHERE id = ? AND user_id = ?
+      `SELECT
+         i.id,
+         i.order_id,
+         o.order_code,
+         c.title,
+         o.billing_cycle_code,
+         o.created_at AS order_created_at,
+         o.unit_price,
+         o.total_price,
+         o.quantity,
+         i.vncloud_vps_id,
+         i.ip_address,
+         i.username,
+         i.password,
+         i.status,
+         i.next_due_date,
+         i.auto_renew
+       FROM vps_instances i
+       LEFT JOIN vps_orders o ON o.id = i.order_id
+       LEFT JOIN vps_catalog_items c ON c.id = o.catalog_item_id
+       WHERE i.id = ? AND i.user_id = ?
        LIMIT 1`,
       [instanceId, user.id],
     );
@@ -879,14 +1155,23 @@ router.post(
       throw new AppError("Không tìm thấy VPS thuộc tài khoản của bạn.", 404);
     }
 
-    if (
-      (payload.action === "on" || payload.action === "off" || payload.action === "restart") &&
-      !isActionAllowedForStatus(payload.action, instance.status)
-    ) {
+    if (!isActionAllowedForStatus(payload.action, instance.status)) {
       scheduleInstanceSync(instance.id, instance.vncloud_vps_id);
       throw new AppError(getInvalidActionStatusMessage(payload.action, instance.status), 409, {
         currentStatus: instance.status,
       });
+    }
+
+    if (payload.action === "renew-vps") {
+      const renewResult = await renewInstanceForUser({
+        userId: user.id,
+        username: user.username,
+        instance,
+        billingCycleCode: payload.billingCycleCode,
+      });
+
+      response.json(renewResult);
+      return;
     }
 
     const actionPayload: Record<string, unknown> = {
@@ -935,7 +1220,12 @@ router.post(
         ],
       );
 
-      throw error;
+      const { publicMessage, statusCode } = getSanitizedProviderError(
+        error,
+        "Không thể gửi lệnh quản lý VPS.",
+      );
+
+      throw new AppError(publicMessage, statusCode);
     }
 
     await executeResult(
@@ -968,7 +1258,11 @@ router.post(
          WHERE id = ?`,
         [optimisticStatus, instance.id],
       );
-      scheduleInstanceSync(instance.id, instance.vncloud_vps_id, getSyncDelaysForAction(payload.action));
+      scheduleInstanceSync(
+        instance.id,
+        instance.vncloud_vps_id,
+        getSyncDelaysForAction(payload.action),
+      );
     }
 
     response.json({
