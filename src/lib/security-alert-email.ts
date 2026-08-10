@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { prisma } from './prisma.js';
 
-const DEFAULT_OWNER_ALERT_EMAIL = 'nhhkha.91tn@gmail.com';
+const DEFAULT_OWNER_ALERT_EMAIL = 'nhathuyfamily@gmail.com';
 
 type AlertUser = {
   id: number | null;
@@ -38,13 +38,29 @@ function normalizeRecipients(value: string) {
 
 function alertRecipients() {
   const recipients = normalizeRecipients(
-    process.env.SECURITY_ALERT_RECIPIENTS ||
+    process.env.ADMIN_ALERT_RECIPIENTS ||
+      process.env.SECURITY_ALERT_RECIPIENTS ||
       process.env.OWNER_ALERT_EMAIL ||
       process.env.OWNER_EMAIL ||
-      process.env.ADMIN_ALERT_RECIPIENTS ||
       DEFAULT_OWNER_ALERT_EMAIL
   );
   return recipients.length > 0 ? recipients : [DEFAULT_OWNER_ALERT_EMAIL];
+}
+
+function buildFromAddress(smtpUser: string) {
+  const requestedFrom = String(
+    process.env.ADMIN_ALERT_FROM_EMAIL ||
+      process.env.SECURITY_ALERT_FROM_EMAIL ||
+      smtpUser ||
+      DEFAULT_OWNER_ALERT_EMAIL
+  ).trim();
+  const from = requestedFrom || smtpUser || DEFAULT_OWNER_ALERT_EMAIL;
+
+  return {
+    from,
+    sender: smtpUser && smtpUser !== from ? smtpUser : undefined,
+    replyTo: from && from !== smtpUser ? from : undefined,
+  };
 }
 
 function escapeHtml(value: unknown) {
@@ -234,10 +250,12 @@ export async function sendSecurityAlertEmail(input: {
     secure,
     auth: { user, pass },
   });
+  const fromAddress = buildFromAddress(user);
 
   const result = await transporter.sendMail({
-    from: user,
-    replyTo: process.env.ADMIN_ALERT_FROM_EMAIL || process.env.OWNER_EMAIL || undefined,
+    from: fromAddress.from,
+    sender: fromAddress.sender,
+    replyTo: fromAddress.replyTo,
     to: recipients.join(', '),
     subject: `[TRUNGTAMMMO BE SECURITY] ${severity} - ${input.title}`,
     text,
